@@ -1,0 +1,21 @@
+{
+  "name": "nostr-bot",
+  "module": "index.ts",
+  "type": "module",
+  "bin": {
+    "nostr-bot": "bin/server.ts"
+  },
+  "scripts": {
+    "start": "bun run bin/server.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.4.0",
+    "nostr-tools": "^2.7.2"
+  }
+}
