@@ -18,6 +18,21 @@ import {
 import { npubEncode } from "nostr-tools/nip19";
 import type { SubCloser } from "nostr-tools/abstract-pool";
 
+import LitJsSdk, { encryptString } from "@lit-protocol/lit-node-client-nodejs";
+import { LIT_RPC, LitNetwork } from "@lit-protocol/constants";
+import {
+  createSiweMessageWithRecaps,
+  generateAuthSig,
+  LitAbility,
+  LitActionResource,
+} from "@lit-protocol/auth-helpers";
+import { EthWalletProvider } from "@lit-protocol/lit-auth-client";
+import { ethers } from "ethers";
+
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
+const GENERATE_WALLET_IPFS_ID = process.env.LIT_GENERATE_ADDRESS_IPFS;
+const PKP_PUBLIC_KEY = process.env.PKP_PUBLIC_KEY;
+
 export interface PartialRelayListEvent extends EventTemplate {
   kind: typeof RelayList;
   tags: (["r", string] | ["r", string, "read" | "write"])[];
@@ -53,14 +68,14 @@ export async function startService({
     const metadataEvent: EventTemplate = {
       kind: Metadata,
       content: JSON.stringify({
-        name: "MRD-Relay-Bot",
-        about: "MRD-Relay-Bot is a bot for receive a payload from MRD-Bot",
-        nip05: "MRD-Relay-Bot",
-        lud06: "MRD-Relay-Bot",
+        name: "Test-Relay-Bot",
+        about: "Test-Relay-Bot is a bot for receive a payload from Test-Bot",
+        nip05: "Test-Relay-Bot",
+        lud06: "Test-Relay-Bot",
       }),
       tags: [
         ["p", nostrPubkey],
-        ["d", "MRD-Relay-Bot"],
+        ["d", "Test-Relay-Bot"],
       ],
       created_at: Math.floor(Date.now() / 1000),
     };
@@ -95,9 +110,10 @@ export async function startService({
           );
           console.info("Payload:", payload);
           // JSON.parse(payload)
-          if (payload.toLowerCase().includes("register me")) {
+          if (payload.toLowerCase().includes("register")) {
             // TODO: Call Lit Action
             // litsdk.call({ event })
+            await generateUserWallet();
           }
         }
       },
@@ -218,4 +234,102 @@ export async function loadNostrRelayList(
   }
 
   return nostr_relays;
+}
+
+export async function generateUserWallet() {
+  if (!PRIVATE_KEY || !GENERATE_WALLET_IPFS_ID || !PKP_PUBLIC_KEY) return;
+
+  const ethersSigner = new ethers.Wallet(
+    PRIVATE_KEY,
+    new ethers.providers.JsonRpcProvider(LIT_RPC.CHRONICLE_YELLOWSTONE)
+  );
+
+  console.log("🔄 Connecting to Lit network...");
+  const litNodeClient = new LitJsSdk.LitNodeClientNodeJs({
+    alertWhenUnauthorized: false,
+    litNetwork: LitNetwork.DatilDev,
+    debug: false,
+  });
+
+  await litNodeClient.connect();
+  console.log("✅ Connected to Lit network");
+
+  const sessionSigs = await litNodeClient.getSessionSigs({
+    chain: "ethereum",
+    expiration: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(), // 24 hours
+    resourceAbilityRequests: [
+      {
+        resource: new LitActionResource("*"),
+        ability: LitAbility.LitActionExecution,
+      },
+    ],
+    authNeededCallback: async ({
+      resourceAbilityRequests,
+      expiration,
+      uri,
+    }) => {
+      const toSign = await createSiweMessageWithRecaps({
+        uri: uri!,
+        expiration: expiration!,
+        resources: resourceAbilityRequests!,
+        walletAddress: ethersSigner.address,
+        nonce: await litNodeClient.getLatestBlockhash(),
+        litNodeClient,
+      });
+
+      return await generateAuthSig({
+        signer: ethersSigner,
+        toSign,
+      });
+    },
+  });
+
+  const generateWallet = await litNodeClient.executeJs({
+    sessionSigs,
+    ipfsId: GENERATE_WALLET_IPFS_ID,
+  });
+
+  console.log(generateWallet.response);
+
+  // console.log("🔄 Getting PKP Session Sigs...");
+  // const pkpSessionSigs = await litNodeClient.getPkpSessionSigs({
+  //   pkpPublicKey: PKP_PUBLIC_KEY,
+  //   authMethods: [
+  //     await EthWalletProvider.authenticate({
+  //       signer: ethersSigner,
+  //       litNodeClient: LitNodeClient,
+  //       expiration: new Date(Date.now() + 1000 * 60 * 10).toISOString(), // 10 minutes
+  //     }),
+  //   ],
+  //   resourceAbilityRequests: [
+  //     {
+  //       resource: new LitActionResource("*"),
+  //       ability: LitAbility.LitActionExecution,
+  //     },
+  //   ],
+  //   expiration: new Date(Date.now() + 1000 * 60 * 10).toISOString(), // 10 minutes
+  // });
+  // console.log("✅ Got PKP Session Sigs");
+
+  // console.log("🔄 Encrypting private key...");
+  //   const { ciphertext, dataToEncryptHash } = await encryptString(
+  //     {
+  //       accessControlConditions: [
+  //         {
+  //           contractAddress: "",
+  //           standardContractType: "",
+  //           chain: "ethereum",
+  //           method: "",
+  //           parameters: [":userAddress"],
+  //           returnValueTest: {
+  //             comparator: "=",
+  //             value: ethersSigner,
+  //           },
+  //         },
+  //       ],
+  //       dataToEncrypt: privateKey,
+  //     },
+  //     litNodeClient
+  //   );
+  //   console.log("✅ Encrypted private key");
 }
